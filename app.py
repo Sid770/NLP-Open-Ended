@@ -9,6 +9,7 @@ import json
 import os
 import base64
 import hashlib
+import re
 from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -31,9 +32,6 @@ import queue
 import time
 from urllib.request import urlretrieve
 import os
-
-
-
 
 
 
@@ -318,6 +316,7 @@ class TabSwitchTracker:
                 "status": "error",
                 "message": f"Error recording tab switch: {str(e)}"
             }
+
 class AudioInterface:
     """Handles all audio input/output operations using Silero VAD and PyAudio"""
     
@@ -520,6 +519,26 @@ class AudioInterface:
             self.audio.terminate()
         except Exception as e:
             print(f"Error in cleanup: {e}")
+            
+    def start_listening(self):
+        """Start listening to audio input"""
+        self.start_recording()
+        
+    def stop_listening(self):
+        """Stop listening to audio input"""
+        self.stop_recording()
+        
+    def speak_text(self, text):
+        """Convert text to speech (TTS)"""
+        try:
+            # This is a placeholder. For actual implementation,
+            # you would need to integrate a TTS library like gTTS or pyttsx3
+            print(f"Text-to-Speech: {text}")
+            # For now, we'll just print the text that would be spoken
+            return True
+        except Exception as e:
+            print(f"Error in text-to-speech: {e}")
+            return False
 
 class InterviewSystem:
     """Real-time AI interview system with speech capabilities"""
@@ -748,6 +767,7 @@ class InterviewSystem:
             
         except Exception as e:
             print(f"Error saving interview results: {e}")
+
 class ExamMonitoringSystem:
     """Complete exam monitoring system with all features"""
     
@@ -774,7 +794,7 @@ class ExamMonitoringSystem:
         self.init_audio()
         self.init_computer_vision()
         self.init_object_detection()
-                # Initialize audio interface
+        # Initialize audio interface
         self.audio_interface = AudioInterface()
         # Control variables
         self.monitoring = False
@@ -1047,10 +1067,10 @@ class ExamMonitoringSystem:
         self.monitoring = True
         stop_event.clear()  # Clear the stop event
         # Start audio interface
-        self.audio_thread = threading.Thread(target=self.audio_interface.start_listening)
+        self.audio_thread = threading.Thread(target=self.audio_detection_thread)
         self.audio_thread.daemon = True
         self.audio_thread.start()
-                # Start audio recording
+        # Start audio recording
         self.audio_interface.start_recording()
         # Start audio monitoring
         if self.audio_stream is not None:
@@ -1121,8 +1141,8 @@ class ExamMonitoringSystem:
     def stop_monitoring(self):
         """Stop monitoring and save session data"""
         self.monitoring = False
-                # Stop audio interface
-        if self.audio_interface:\
+        # Stop audio interface
+        if self.audio_interface:
             self.audio_interface.stop_listening()
         
         if self.audio_thread:
@@ -1172,10 +1192,7 @@ def init_interview_components():
     except Exception as e:
         logging.error(f"Failed to initialize AI components: {e}")
         return False
-        
-    except Exception as e:
-        logging.error(f"Failed to initialize AI components: {e}")
-        return False
+
 # Add placeholder functions for missing implementations
 def extract_text_from_file(file_path):
     """Extract text from various file formats"""
@@ -1208,113 +1225,6 @@ def extract_text_from_file(file_path):
     except Exception as e:
         logging.error(f"Error extracting text from {file_path}: {e}")
         return None
-
-        def create_interview_screen(self):
-            """Create interview interface with real-time speech capabilities"""
-        self.clear_screen()
-        
-        # Title
-        title_label = tk.Label(self.root, text="AI Interview System",
-                               font=("Arial", 24, "bold"), bg='#f0f0f0', fg='#333')
-        title_label.pack(pady=30)
-        
-        # Interview frame
-        interview_frame = tk.Frame(self.root, bg='white', padx=40, pady=30)
-        interview_frame.pack(pady=20)
-        
-        # Upload resume
-        tk.Label(interview_frame, text="Upload Resume:", font=("Arial", 12),
-                bg='white').pack(anchor='w')
-        
-        self.resume_path = tk.StringVar()
-        resume_frame = tk.Frame(interview_frame, bg='white')
-        resume_frame.pack(pady=5, fill='x')
-        tk.Entry(resume_frame, textvariable=self.resume_path,
-                font=("Arial", 10), width=40).pack(side='left', padx=(0, 5))
-        tk.Button(resume_frame, text="Browse",
-                 command=self.browse_resume).pack(side='left')
-        
-        # Upload job description
-        tk.Label(interview_frame, text="Upload Job Description:", font=("Arial", 12),
-                bg='white').pack(anchor='w', pady=(10, 0))
-        
-        self.jd_path = tk.StringVar()
-        jd_frame = tk.Frame(interview_frame, bg='white')
-        jd_frame.pack(pady=5, fill='x')
-        tk.Entry(jd_frame, textvariable=self.jd_path,
-                font=("Arial", 10), width=40).pack(side='left', padx=(0, 5))
-        tk.Button(jd_frame, text="Browse",
-                 command=self.browse_jd).pack(side='left')
-        
-        # Buttons
-        button_frame = tk.Frame(interview_frame, bg='white')
-        button_frame.pack(pady=20)
-        
-        tk.Button(button_frame, text="Start Real-Time Interview",
-                 command=self.start_realtime_interview,
-                 bg='#4CAF50', fg='white',
-                 font=("Arial", 12), padx=20).pack(side='left', padx=5)
-        
-        tk.Button(button_frame, text="Back to Dashboard",
-                 command=self.create_dashboard,
-                 bg='#9E9E9E', fg='white',
-                 font=("Arial", 12), padx=20).pack(side='left', padx=5)
-    
-    def start_realtime_interview(self):
-        """Start real-time interview with speech interaction"""
-        resume_file = self.resume_path.get().strip()
-        jd_file = self.jd_path.get().strip()
-        
-        if not resume_file or not jd_file:
-            messagebox.showerror("Error", "Please select both resume and job description files")
-            return
-            
-        try:
-            # Read resume and job description
-            resume_text = extract_text_from_file(resume_file)
-            jd_text = extract_text_from_file(jd_file)
-            
-            if not resume_text or not jd_text:
-                messagebox.showerror("Error", "Could not read the uploaded files")
-                return
-                
-            # Initialize interview system
-            interview_system = InterviewSystem(
-                AudioInterface(),
-                self.current_user,
-                gemini_client
-            )
-            
-            # Show interview instructions
-            instructions = """
-            REAL-TIME INTERVIEW INSTRUCTIONS
-            
-            1. The system will ask questions verbally
-            2. Speak clearly into your microphone to answer
-            3. Wait for the system to process each answer
-            4. Press 'q' to quit, 'r' to repeat question
-            5. The interview will be recorded and analyzed
-            
-            Ready to start?
-            """
-            
-            result = messagebox.askokcancel("Interview Instructions", instructions)
-            if not result:
-                return
-                
-            # Hide main window during interview
-            self.root.withdraw()
-            
-            # Start the interview
-            interview_system.start_interview(resume_text, jd_text)
-            
-            # Show main window again
-            self.root.deiconify()
-            
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to start interview: {str(e)}")
-            self.root.deiconify()
-
 
 def generate_interview_questions(resume_text, job_description):
     """Generate interview questions using AI based on resume and job description"""
@@ -1477,7 +1387,6 @@ def basic_evaluation(qa_pairs):
     logging.info(f"Basic evaluation completed with score: {int(final_score)}")
     return int(final_score)
 
-
 class ExamMonitoringGUI:
     """GUI application for the exam monitoring system"""
     
@@ -1499,8 +1408,6 @@ class ExamMonitoringGUI:
             logging.warning("AI Interview system initialization failed - check your API key in .env file")
         
         self.create_login_screen()
-        # Remove this line as it references undefined function
-        # init_interview_components()
     
     def create_login_screen(self):
         """Create login interface"""
@@ -1726,7 +1633,145 @@ class ExamMonitoringGUI:
         tk.Button(button_frame, text="Logout", 
                  command=self.logout, bg='#F44336', fg='white',
                  font=("Arial", 14), padx=30, pady=10).pack(pady=10)
-
+        
+        # Display current user information
+        user_info_frame = tk.Frame(self.root, bg='#f0f0f0', padx=20, pady=10)
+        user_info_frame.pack(fill='x', side='bottom')
+        
+        # Current date and user info
+        current_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        user_info = f"Logged in as: {self.current_user['email']} | Last login: {current_date}"
+        tk.Label(user_info_frame, text=user_info, font=("Arial", 10),bg='#f0f0f0', fg='#666').pack(side='right')
+    def create_interview_screen(self):
+        """Create interview interface with real-time speech capabilities"""
+        self.clear_screen()
+        
+        # Title
+        title_label = tk.Label(self.root, text="AI Interview System",
+                               font=("Arial", 24, "bold"), bg='#f0f0f0', fg='#333')
+        title_label.pack(pady=30)
+        
+        # Interview frame
+        interview_frame = tk.Frame(self.root, bg='white', padx=40, pady=30)
+        interview_frame.pack(pady=20)
+        
+        # Upload resume
+        tk.Label(interview_frame, text="Upload Resume:", font=("Arial", 12),
+                bg='white').pack(anchor='w')
+        
+        self.resume_path = tk.StringVar()
+        resume_frame = tk.Frame(interview_frame, bg='white')
+        resume_frame.pack(pady=5, fill='x')
+        tk.Entry(resume_frame, textvariable=self.resume_path,
+                font=("Arial", 10), width=40).pack(side='left', padx=(0, 5))
+        tk.Button(resume_frame, text="Browse",
+                 command=self.browse_resume).pack(side='left')
+        
+        # Upload job description
+        tk.Label(interview_frame, text="Upload Job Description:", font=("Arial", 12),
+                bg='white').pack(anchor='w', pady=(10, 0))
+        
+        self.jd_path = tk.StringVar()
+        jd_frame = tk.Frame(interview_frame, bg='white')
+        jd_frame.pack(pady=5, fill='x')
+        tk.Entry(jd_frame, textvariable=self.jd_path,
+                font=("Arial", 10), width=40).pack(side='left', padx=(0, 5))
+        tk.Button(jd_frame, text="Browse",
+                 command=self.browse_jd).pack(side='left')
+        
+        # Buttons
+        button_frame = tk.Frame(interview_frame, bg='white')
+        button_frame.pack(pady=20)
+        
+        tk.Button(button_frame, text="Start Real-Time Interview",
+                 command=self.start_realtime_interview,
+                 bg='#4CAF50', fg='white',
+                 font=("Arial", 12), padx=20).pack(side='left', padx=5)
+        
+        tk.Button(button_frame, text="Back to Dashboard",
+                 command=self.create_dashboard,
+                 bg='#9E9E9E', fg='white',
+                 font=("Arial", 12), padx=20).pack(side='left', padx=5)
+    
+    def browse_resume(self):
+        """Browse for resume file"""
+        filename = filedialog.askopenfilename(
+            title="Select Resume",
+            filetypes=[("All supported", "*.pdf *.docx *.txt"), 
+                       ("PDF files", "*.pdf"),
+                       ("Word files", "*.docx"),
+                       ("Text files", "*.txt")]
+        )
+        if filename:
+            self.resume_path.set(filename)
+            
+    def browse_jd(self):
+        """Browse for job description file"""
+        filename = filedialog.askopenfilename(
+            title="Select Job Description",
+            filetypes=[("All supported", "*.pdf *.docx *.txt"), 
+                       ("PDF files", "*.pdf"),
+                       ("Word files", "*.docx"),
+                       ("Text files", "*.txt")]
+        )
+        if filename:
+            self.jd_path.set(filename)
+            
+    def start_realtime_interview(self):
+        """Start real-time interview with speech interaction"""
+        resume_file = self.resume_path.get().strip()
+        jd_file = self.jd_path.get().strip()
+        
+        if not resume_file or not jd_file:
+            messagebox.showerror("Error", "Please select both resume and job description files")
+            return
+            
+        try:
+            # Read resume and job description
+            resume_text = extract_text_from_file(resume_file)
+            jd_text = extract_text_from_file(jd_file)
+            
+            if not resume_text or not jd_text:
+                messagebox.showerror("Error", "Could not read the uploaded files")
+                return
+                
+            # Initialize interview system
+            interview_system = InterviewSystem(
+                AudioInterface(),
+                self.current_user,
+                gemini_client
+            )
+            
+            # Show interview instructions
+            instructions = """
+            REAL-TIME INTERVIEW INSTRUCTIONS
+            
+            1. The system will ask questions verbally
+            2. Speak clearly into your microphone to answer
+            3. Wait for the system to process each answer
+            4. Press 'q' to quit, 'r' to repeat question
+            5. The interview will be recorded and analyzed
+            
+            Ready to start?
+            """
+            
+            result = messagebox.askokcancel("Interview Instructions", instructions)
+            if not result:
+                return
+                
+            # Hide main window during interview
+            self.root.withdraw()
+            
+            # Start the interview
+            interview_system.start_interview(resume_text, jd_text)
+            
+            # Show main window again
+            self.root.deiconify()
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to start interview: {str(e)}")
+            self.root.deiconify()
+            
     def start_monitoring(self):
         """Start exam monitoring session"""
         if self.current_user is None:
@@ -2084,6 +2129,54 @@ Tab Switch Limit: 5 switches maximum
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to export data: {str(e)}")
 
+    def start_web_exam(self):
+        """Start web-based exam with tab switch monitoring"""
+        # Instead of just showing the "not implemented" message, let's provide a real implementation
+        if not self.current_user:
+            messagebox.showerror("Error", "You must be logged in to start an exam")
+            return
+            
+        # Show exam rules
+        rules_text = """
+WEB EXAM RULES:
+
+1. You will be redirected to a web-based exam interface
+2. Tab switching is monitored and limited to 5 switches
+3. Your exam will be terminated automatically if you exceed the limit
+4. The exam interface will open in your default browser
+5. You'll need to login with your same credentials 
+
+Would you like to continue?
+"""
+        proceed = messagebox.askokcancel("Web Exam", rules_text)
+        if not proceed:
+            return
+            
+        # Start the Flask server in a separate thread if it's not already running
+        try:
+            import webbrowser
+            import threading
+            
+            # Store user ID in session for the web interface
+            def start_server():
+                app.run(debug=False, port=5000)
+                
+            # Check if server is already running
+            server_thread = threading.Thread(target=start_server)
+            server_thread.daemon = True
+            server_thread.start()
+            
+            # Wait a moment for server to start
+            time.sleep(1)
+            
+            # Open the exam page in browser
+            webbrowser.open('http://localhost:5000/exam_page')
+            
+            messagebox.showinfo("Web Exam", "Web exam interface opened in your browser.")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to start web exam: {str(e)}")
+
     def logout(self):
         """Logout current user"""
         self.current_user = None
@@ -2099,91 +2192,6 @@ Tab Switch Limit: 5 switches maximum
     def run(self):
         """Start the GUI application"""
         self.root.mainloop()
-
-    def create_interview_screen(self):
-        """Create interview interface"""
-        self.clear_screen()
-        title_label = tk.Label(self.root, text="AI Interview System",font=("Arial", 24, "bold"), bg='#f0f0f0', fg='#333')
-        title_label.pack(pady=30)
-        interview_frame = tk.Frame(self.root, bg='white', padx=40, pady=30)
-        interview_frame.pack(pady=20)
-
-        # Upload resume
-        tk.Label(interview_frame, text="Upload Resume:", font=("Arial", 12),bg='white').pack(anchor='w')
-
-        self.resume_path = tk.StringVar()
-        resume_frame = tk.Frame(interview_frame, bg='white')
-        resume_frame.pack(pady=5, fill='x')
-        tk.Entry(resume_frame, textvariable=self.resume_path, 
-        font=("Arial", 10), width=40).pack(side='left', padx=(0, 5))
-        tk.Button(resume_frame, text="Browse", 
-        command=self.browse_resume).pack(side='left')
-
-        # Upload job description
-        tk.Label(interview_frame, text="Upload Job Description:", font=("Arial", 12),bg='white').pack(anchor='w', pady=(10, 0))
-        self.jd_path = tk.StringVar()
-        jd_frame = tk.Frame(interview_frame, bg='white')
-        jd_frame.pack(pady=5, fill='x')
-        tk.Entry(jd_frame, textvariable=self.jd_path,font=("Arial", 10), width=40).pack(side='left', padx=(0, 5))
-        tk.Button(jd_frame, text="Browse", 
-             command=self.browse_jd).pack(side='left')
-
-        # Buttons
-        button_frame = tk.Frame(interview_frame, bg='white')
-        button_frame.pack(pady=20)
-
-        tk.Button(button_frame, text="Start Interview", 
-             command=self.start_interview, bg='#4CAF50', fg='white',
-             font=("Arial", 12), padx=20).pack(side='left', padx=5)
-
-        tk.Button(button_frame, text="Back to Dashboard", 
-             command=self.create_dashboard, bg='#9E9E9E', fg='white',
-             font=("Arial", 12), padx=20).pack(side='left', padx=5)
-
-    def browse_resume(self):
-        """Browse for resume file"""
-        filename = filedialog.askopenfilename(
-            title="Select Resume",
-            filetypes=[("All supported", "*.pdf *.docx *.txt"), 
-                       ("PDF files", "*.pdf"),
-                       ("Word files", "*.docx"),
-                       ("Text files", "*.txt")]
-        )
-        if filename:
-            self.resume_path.set(filename)
-
-    def browse_jd(self):
-        """Browse for job description file"""
-        filename = filedialog.askopenfilename(
-            title="Select Job Description",
-            filetypes=[("All supported", "*.pdf *.docx *.txt"), 
-                       ("PDF files", "*.pdf"),
-                       ("Word files", "*.docx"),
-                       ("Text files", "*.txt")]
-        )
-        if filename:
-            self.jd_path.set(filename)
-
-    def start_interview(self):
-        """Start the interview process"""
-        if not self.current_user:
-            messagebox.showerror("Error", "No user logged in")
-            return
-        
-        resume_file = self.resume_path.get().strip()
-        jd_file = self.jd_path.get().strip()
-        
-        if not resume_file or not jd_file:
-            messagebox.showerror("Error", "Please select both resume and job description files")
-            return
-        
-        # For now, just show a placeholder message
-        messagebox.showinfo("Info", "Interview system not fully implemented yet")
-
-    def start_web_exam(self):
-        """Start web-based exam with tab switch monitoring"""
-        messagebox.showinfo("Info", "Web exam system not fully implemented yet")
-
 
 # Flask Web Application for Tab Switch API
 app = Flask(__name__)
@@ -2597,4 +2605,4 @@ if __name__ == "__main__":
         logging.error(f"Application error: {e}")
         print(f"Application failed to start: {e}")
         print("Please ensure all required libraries are installed:")
-        print("pip install opencv-python mediapipe ultralytics face-recognition pyaudio numpy pillow flask sentence-transformers scikit-learn python-docx PyPDF2 google-generativeai python-dotenv")        
+        print("pip install opencv-python mediapipe ultralytics face-recognition pyaudio numpy pillow flask sentence-transformers scikit-learn python-docx PyPDF2 google-generativeai python-dotenv speechrecognition torch")
