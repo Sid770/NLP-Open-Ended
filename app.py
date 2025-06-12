@@ -694,6 +694,229 @@ class ExamMonitoringSystem:
         
         logging.info("Session data saved successfully")
 
+# AI Interview Functions - Add these BEFORE the ExamMonitoringGUI class
+def init_interview_components():
+    """Initialize AI components for interview system"""
+    global gemini_client
+    try:
+        # Load environment variables
+        load_dotenv()
+        
+        # Get API key from environment
+        api_key = os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
+        if not api_key:
+            logging.error("Google/Gemini API key not found in environment variables")
+            return False
+        
+        # Configure the AI client
+        genai.configure(api_key=api_key)
+        gemini_client = genai.GenerativeModel('gemini-pro')
+        logging.info("Gemini AI client initialized successfully")
+        return True
+        
+    except Exception as e:
+        logging.error(f"Failed to initialize AI components: {e}")
+        return False
+        
+    except Exception as e:
+        logging.error(f"Failed to initialize AI components: {e}")
+        return False
+# Add placeholder functions for missing implementations
+def extract_text_from_file(file_path):
+    """Extract text from various file formats"""
+    try:
+        file_extension = os.path.splitext(file_path)[1].lower()
+        
+        if file_extension == '.txt':
+            with open(file_path, 'r', encoding='utf-8') as file:
+                return file.read()
+                
+        elif file_extension == '.pdf':
+            text = ""
+            with open(file_path, 'rb') as file:
+                pdf_reader = PyPDF2.PdfReader(file)
+                for page in pdf_reader.pages:
+                    text += page.extract_text() + "\n"
+            return text
+            
+        elif file_extension in ['.docx', '.doc']:
+            doc = Document(file_path)
+            text = ""
+            for paragraph in doc.paragraphs:
+                text += paragraph.text + "\n"
+            return text
+            
+        else:
+            logging.error(f"Unsupported file format: {file_extension}")
+            return None
+            
+    except Exception as e:
+        logging.error(f"Error extracting text from {file_path}: {e}")
+        return None
+
+
+def generate_interview_questions(resume_text, job_description):
+    """Generate interview questions using AI based on resume and job description"""
+    global gemini_client
+    
+    if not gemini_client:
+        logging.error("Gemini client not initialized")
+        return [
+            "Tell me about yourself and your background.",
+            "Why are you interested in this position?",
+            "What are your key strengths?",
+            "Describe a challenging situation you faced and how you handled it.",
+            "What are your career goals?",
+            "How do you handle working in a team?",
+            "What technical skills do you possess?",
+            "Why should we hire you for this position?"
+        ]
+    
+    try:
+        prompt = f"""
+You are an expert interviewer conducting a job interview. Based on the candidate's resume and the job description provided, generate 8 relevant interview questions that assess technical skills, experience, and cultural fit.
+
+Resume (first 2000 characters):
+{resume_text[:2000]}
+
+Job Description (first 1500 characters):
+{job_description[:1500]}
+
+Generate exactly 8 questions, each on a new line, starting with "Q:" followed by the question.
+Example format:
+Q: Tell me about your experience with...
+Q: How would you handle...
+
+Focus on:
+- Technical skills mentioned in resume
+- Experience relevant to job requirements
+- Problem-solving abilities
+- Career motivation
+"""
+
+        response = gemini_client.generate_content(prompt)
+        response_text = response.text.strip()
+        
+        # Extract questions from response
+        questions = []
+        lines = response_text.split('\n')
+        
+        for line in lines:
+            line = line.strip()
+            if line.startswith('Q:'):
+                question = line[2:].strip()
+                if question and len(question) > 10:
+                    questions.append(question)
+            elif '?' in line and len(line) > 15:
+                # Alternative parsing for questions without Q: prefix
+                question = line.strip()
+                if question:
+                    questions.append(question)
+        
+        # Ensure we have at least some questions
+        if len(questions) >= 5:
+            logging.info(f"Generated {len(questions)} interview questions using AI")
+            return questions[:8]  # Return maximum 8 questions
+        else:
+            raise Exception("Insufficient questions generated")
+        
+    except Exception as e:
+        logging.error(f"Error generating AI interview questions: {e}")
+        # Return default questions as fallback
+        return [
+            "Tell me about yourself and your professional background.",
+            "Why are you interested in this specific position?",
+            "What are your key strengths that make you suitable for this role?",
+            "Describe a challenging project you worked on and how you handled it.",
+            "How do you stay updated with industry trends and new technologies?",
+            "What motivates you in your work?",
+            "How do you handle working under pressure or tight deadlines?",
+            "Where do you see yourself professionally in the next 3-5 years?"
+        ]
+
+def evaluate_qa_pairs(qa_pairs):
+    """Evaluate interview answers using AI and return a score"""
+    global gemini_client
+    
+    if not gemini_client:
+        logging.error("Gemini client not initialized, using basic evaluation")
+        return basic_evaluation(qa_pairs)
+    
+    try:
+        # Prepare the evaluation prompt
+        qa_text = ""
+        for i, qa in enumerate(qa_pairs, 1):
+            qa_text += f"Question {i}: {qa['question']}\nAnswer {i}: {qa['answer']}\n\n"
+        
+        prompt = f"""
+Evaluate this interview based on the questions and answers provided. Give a score from 0-100.
+
+Evaluation Criteria:
+- Answer relevance and completeness (30%)
+- Communication clarity (25%) 
+- Technical knowledge shown (20%)
+- Professional attitude (15%)
+- Examples and specifics provided (10%)
+
+Interview Content:
+{qa_text[:2500]}
+
+Provide only a numeric score from 0-100. Consider that some answers might be "Skipped".
+"""
+
+        response = gemini_client.generate_content(prompt)
+        response_text = response.text.strip()
+        
+        # Extract numeric score
+        numbers = re.findall(r'\d+', response_text)
+        if numbers:
+            score = min(100, max(0, int(numbers[0])))
+            logging.info(f"AI evaluation completed with score: {score}")
+            return score
+        else:
+            raise Exception("No score found in AI response")
+        
+    except Exception as e:
+        logging.error(f"Error in AI evaluation: {e}")
+        return basic_evaluation(qa_pairs)
+
+def basic_evaluation(qa_pairs):
+    """Basic evaluation fallback when AI is not available"""
+    total_questions = len(qa_pairs)
+    if total_questions == 0:
+        return 0
+    
+    answered_questions = 0
+    total_score = 0
+    
+    for qa in qa_pairs:
+        answer = qa['answer'].strip()
+        if answer and answer.lower() != 'skipped':
+            answered_questions += 1
+            # Basic scoring based on answer length and quality indicators
+            answer_length = len(answer)
+            if answer_length > 100:
+                total_score += 85
+            elif answer_length > 50:
+                total_score += 70
+            elif answer_length > 20:
+                total_score += 55
+            else:
+                total_score += 40
+        # Skipped questions get 0 points
+    
+    if answered_questions == 0:
+        return 25  # Minimum score for attempting the interview
+    
+    average_score = total_score / answered_questions
+    # Adjust for completion rate
+    completion_bonus = (answered_questions / total_questions) * 15
+    final_score = min(100, average_score + completion_bonus)
+    
+    logging.info(f"Basic evaluation completed with score: {int(final_score)}")
+    return int(final_score)
+
+
 class ExamMonitoringGUI:
     """GUI application for the exam monitoring system"""
     
@@ -708,8 +931,15 @@ class ExamMonitoringGUI:
         self.current_user = None
         self.monitoring_system = None
         
+        # Initialize AI interview components
+        if init_interview_components():
+            logging.info("AI Interview system initialized successfully")
+        else:
+            logging.warning("AI Interview system initialization failed - check your API key in .env file")
+        
         self.create_login_screen()
-        init_interview_components()
+        # Remove this line as it references undefined function
+        # init_interview_components()
     
     def create_login_screen(self):
         """Create login interface"""
@@ -887,55 +1117,55 @@ class ExamMonitoringGUI:
             self.create_dashboard()
         else:
             messagebox.showerror("Login Failed", result)
-    
-def create_dashboard(self):
-    """Create user dashboard"""
-    self.clear_screen()
-    
-    # Title
-    title_label = tk.Label(self.root, text=f"Welcome, {self.current_user['name']}", 
-                          font=("Arial", 24, "bold"), bg='#f0f0f0', fg='#333')
-    title_label.pack(pady=30)
-    
-    # Dashboard frame
-    dash_frame = tk.Frame(self.root, bg='white', padx=40, pady=30)
-    dash_frame.pack(pady=20)
-    
-    tk.Label(dash_frame, text="Exam Dashboard", font=("Arial", 18, "bold"), 
-            bg='white', fg='#333').pack(pady=20)
-    
-    # Buttons
-    button_frame = tk.Frame(dash_frame, bg='white')
-    button_frame.pack(pady=20)
-    
-    tk.Button(button_frame, text="Start Exam Monitoring", 
-             command=self.start_monitoring, bg='#4CAF50', fg='white',
-             font=("Arial", 14), padx=30, pady=10).pack(pady=10)
-    
-    tk.Button(button_frame, text="AI Interview System", 
-             command=self.create_interview_screen, bg='#673AB7', fg='white',
-             font=("Arial", 14), padx=30, pady=10).pack(pady=10)
-    
-    tk.Button(button_frame, text="View Previous Sessions", 
-             command=self.view_sessions, bg='#2196F3', fg='white',
-             font=("Arial", 14), padx=30, pady=10).pack(pady=10)
-    
-    tk.Button(button_frame, text="View Cheating Events", 
-             command=self.view_cheating_events, bg='#FF5722', fg='white',
-             font=("Arial", 14), padx=30, pady=10).pack(pady=10)
-    
-    tk.Button(button_frame, text="System Settings", 
-             command=self.show_settings, bg='#FF9800', fg='white',
-             font=("Arial", 14), padx=30, pady=10).pack(pady=10)
-    
-    tk.Button(button_frame, text="Start Web Exam", 
-             command=self.start_web_exam, bg='#9C27B0', fg='white',
-             font=("Arial", 14), padx=30, pady=10).pack(pady=10)
-    
-    tk.Button(button_frame, text="Logout", 
-             command=self.logout, bg='#F44336', fg='white',
-             font=("Arial", 14), padx=30, pady=10).pack(pady=10)
-    
+
+    def create_dashboard(self):
+        """Create user dashboard"""
+        self.clear_screen()
+        
+        # Title
+        title_label = tk.Label(self.root, text=f"Welcome, {self.current_user['name']}", 
+                              font=("Arial", 24, "bold"), bg='#f0f0f0', fg='#333')
+        title_label.pack(pady=30)
+        
+        # Dashboard frame
+        dash_frame = tk.Frame(self.root, bg='white', padx=40, pady=30)
+        dash_frame.pack(pady=20)
+        
+        tk.Label(dash_frame, text="Exam Dashboard", font=("Arial", 18, "bold"), 
+                bg='white', fg='#333').pack(pady=20)
+        
+        # Buttons
+        button_frame = tk.Frame(dash_frame, bg='white')
+        button_frame.pack(pady=20)
+        
+        tk.Button(button_frame, text="Start Exam Monitoring", 
+                 command=self.start_monitoring, bg='#4CAF50', fg='white',
+                 font=("Arial", 14), padx=30, pady=10).pack(pady=10)
+        
+        tk.Button(button_frame, text="AI Interview System", 
+                 command=self.create_interview_screen, bg='#673AB7', fg='white',
+                 font=("Arial", 14), padx=30, pady=10).pack(pady=10)
+        
+        tk.Button(button_frame, text="View Previous Sessions", 
+                 command=self.view_sessions, bg='#2196F3', fg='white',
+                 font=("Arial", 14), padx=30, pady=10).pack(pady=10)
+        
+        tk.Button(button_frame, text="View Cheating Events", 
+                 command=self.view_cheating_events, bg='#FF5722', fg='white',
+                 font=("Arial", 14), padx=30, pady=10).pack(pady=10)
+        
+        tk.Button(button_frame, text="System Settings", 
+                 command=self.show_settings, bg='#FF9800', fg='white',
+                 font=("Arial", 14), padx=30, pady=10).pack(pady=10)
+        
+        tk.Button(button_frame, text="Start Web Exam", 
+                 command=self.start_web_exam, bg='#9C27B0', fg='white',
+                 font=("Arial", 14), padx=30, pady=10).pack(pady=10)
+        
+        tk.Button(button_frame, text="Logout", 
+                 command=self.logout, bg='#F44336', fg='white',
+                 font=("Arial", 14), padx=30, pady=10).pack(pady=10)
+
     def start_monitoring(self):
         """Start exam monitoring session"""
         if self.current_user is None:
@@ -976,7 +1206,7 @@ Click OK to start the exam monitoring.
             messagebox.showerror("Error", f"Failed to start monitoring: {str(e)}")
         finally:
             self.root.deiconify()  # Show the main window again
-    
+
     def view_sessions(self):
         """View previous monitoring sessions"""
         sessions = self.data_manager.get_user_sessions(self.current_user['id'])
@@ -1063,7 +1293,7 @@ Click OK to start the exam monitoring.
         # Close button
         tk.Button(sessions_window, text="Close", command=sessions_window.destroy,
                  bg='#9E9E9E', fg='white', font=("Arial", 12), padx=20).pack(pady=5)
-    
+
     def view_cheating_events(self):
         """View cheating events for current user"""
         events = self.data_manager.load_cheating_events()
@@ -1124,7 +1354,7 @@ Click OK to start the exam monitoring.
         # Close button
         tk.Button(events_window, text="Close", command=events_window.destroy,
                  bg='#9E9E9E', fg='white', font=("Arial", 12), padx=20).pack(pady=10)
-    
+
     def show_session_details(self, session):
         """Show detailed session information"""
         details_window = tk.Toplevel(self.root)
@@ -1174,7 +1404,7 @@ ALERT SUMMARY
         # Close button
         tk.Button(details_window, text="Close", command=details_window.destroy,
                  bg='#9E9E9E', fg='white', font=("Arial", 12), padx=20).pack(pady=10)
-    
+
     def show_settings(self):
         """Show system settings"""
         settings_window = tk.Toplevel(self.root)
@@ -1223,7 +1453,7 @@ Tab Switch Limit: 5 switches maximum
         
         tk.Button(button_frame, text="Close", command=settings_window.destroy,
                  bg='#9E9E9E', fg='white', font=("Arial", 12), padx=20).pack(pady=5)
-    
+
     def _check_audio(self):
         """Check if audio is available"""
         try:
@@ -1232,7 +1462,7 @@ Tab Switch Limit: 5 switches maximum
             return True
         except:
             return False
-    
+
     def test_camera(self):
         """Test camera functionality"""
         cap = cv2.VideoCapture(0)
@@ -1256,7 +1486,7 @@ Tab Switch Limit: 5 switches maximum
         
         cap.release()
         cv2.destroyAllWindows()
-    
+
     def export_data(self):
         """Export user session data"""
         sessions = self.data_manager.get_user_sessions(self.current_user['id'])
@@ -1292,19 +1522,19 @@ Tab Switch Limit: 5 switches maximum
                 messagebox.showinfo("Success", f"Data exported to {filename}")
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to export data: {str(e)}")
-    
+
     def logout(self):
         """Logout current user"""
         self.current_user = None
         self.monitoring_system = None
         stop_event.clear()
         self.create_login_screen()
-    
+
     def clear_screen(self):
         """Clear all widgets from the screen"""
         for widget in self.root.winfo_children():
             widget.destroy()
-    
+
     def run(self):
         """Start the GUI application"""
         self.root.mainloop()
@@ -1316,10 +1546,10 @@ Tab Switch Limit: 5 switches maximum
         title_label.pack(pady=30)
         interview_frame = tk.Frame(self.root, bg='white', padx=40, pady=30)
         interview_frame.pack(pady=20)
-    
-    # Upload resume
+
+        # Upload resume
         tk.Label(interview_frame, text="Upload Resume:", font=("Arial", 12),bg='white').pack(anchor='w')
-    
+
         self.resume_path = tk.StringVar()
         resume_frame = tk.Frame(interview_frame, bg='white')
         resume_frame.pack(pady=5, fill='x')
@@ -1327,8 +1557,8 @@ Tab Switch Limit: 5 switches maximum
         font=("Arial", 10), width=40).pack(side='left', padx=(0, 5))
         tk.Button(resume_frame, text="Browse", 
         command=self.browse_resume).pack(side='left')
-    
-    # Upload job description
+
+        # Upload job description
         tk.Label(interview_frame, text="Upload Job Description:", font=("Arial", 12),bg='white').pack(anchor='w', pady=(10, 0))
         self.jd_path = tk.StringVar()
         jd_frame = tk.Frame(interview_frame, bg='white')
@@ -1336,369 +1566,62 @@ Tab Switch Limit: 5 switches maximum
         tk.Entry(jd_frame, textvariable=self.jd_path,font=("Arial", 10), width=40).pack(side='left', padx=(0, 5))
         tk.Button(jd_frame, text="Browse", 
              command=self.browse_jd).pack(side='left')
-    
-    # Buttons
+
+        # Buttons
         button_frame = tk.Frame(interview_frame, bg='white')
         button_frame.pack(pady=20)
-    
+
         tk.Button(button_frame, text="Start Interview", 
              command=self.start_interview, bg='#4CAF50', fg='white',
              font=("Arial", 12), padx=20).pack(side='left', padx=5)
-    
+
         tk.Button(button_frame, text="Back to Dashboard", 
              command=self.create_dashboard, bg='#9E9E9E', fg='white',
              font=("Arial", 12), padx=20).pack(side='left', padx=5)
 
-def browse_resume(self):
-    """Browse for resume file"""
-    filename = filedialog.askopenfilename(
-        title="Select Resume",
-        filetypes=[("All supported", "*.pdf *.docx *.txt"), 
-                   ("PDF files", "*.pdf"),
-                   ("Word files", "*.docx"),
-                   ("Text files", "*.txt")]
-    )
-    if filename:
-        self.resume_path.set(filename)
+    def browse_resume(self):
+        """Browse for resume file"""
+        filename = filedialog.askopenfilename(
+            title="Select Resume",
+            filetypes=[("All supported", "*.pdf *.docx *.txt"), 
+                       ("PDF files", "*.pdf"),
+                       ("Word files", "*.docx"),
+                       ("Text files", "*.txt")]
+        )
+        if filename:
+            self.resume_path.set(filename)
 
-def browse_jd(self):
-    """Browse for job description file"""
-    filename = filedialog.askopenfilename(
-        title="Select Job Description",
-        filetypes=[("All supported", "*.pdf *.docx *.txt"), 
-                   ("PDF files", "*.pdf"),
-                   ("Word files", "*.docx"),
-                   ("Text files", "*.txt")]
-    )
-    if filename:
-        self.jd_path.set(filename)
+    def browse_jd(self):
+        """Browse for job description file"""
+        filename = filedialog.askopenfilename(
+            title="Select Job Description",
+            filetypes=[("All supported", "*.pdf *.docx *.txt"), 
+                       ("PDF files", "*.pdf"),
+                       ("Word files", "*.docx"),
+                       ("Text files", "*.txt")]
+        )
+        if filename:
+            self.jd_path.set(filename)
 
-def start_interview(self):
-    """Start the interview process"""
-    if not self.current_user:
-        messagebox.showerror("Error", "No user logged in")
-        return
-    
-    resume_file = self.resume_path.get().strip()
-    jd_file = self.jd_path.get().strip()
-    
-    if not resume_file or not jd_file:
-        messagebox.showerror("Error", "Please select both resume and job description files")
-        return
-        # Initialize interview system if not already done
-    if not hasattr(self, 'interview_system'):
-        self.interview_system = InterviewSystem(self.data_manager)
-    
-    # Start interview session
-    session_data, message = self.interview_system.start_interview_session(
-        self.current_user['id'], resume_file, jd_file
-    )
-    
-    if session_data:
-        self.current_interview_session = session_data
-        messagebox.showinfo("Success", message)
-        self.show_interview_question()
-    else:
-        messagebox.showerror("Error", message)
+    def start_interview(self):
+        """Start the interview process"""
+        if not self.current_user:
+            messagebox.showerror("Error", "No user logged in")
+            return
+        
+        resume_file = self.resume_path.get().strip()
+        jd_file = self.jd_path.get().strip()
+        
+        if not resume_file or not jd_file:
+            messagebox.showerror("Error", "Please select both resume and job description files")
+            return
+        
+        # For now, just show a placeholder message
+        messagebox.showinfo("Info", "Interview system not fully implemented yet")
 
-def show_interview_question(self):
-    """Show current interview question"""
-    if not hasattr(self, 'current_interview_session'):
-        messagebox.showerror("Error", "No active interview session")
-        return
-    
-    session = self.current_interview_session
-    current_q = session['current_question']
-    
-    if current_q >= len(session['questions']):
-        self.show_interview_results()
-        return
-    
-    self.clear_screen()
-    
-    # Title
-    title_label = tk.Label(self.root, text=f"Question {current_q + 1} of {len(session['questions'])}", 
-                          font=("Arial", 20, "bold"), bg='#f0f0f0', fg='#333')
-    title_label.pack(pady=20)
-    
-    # Question frame
-    question_frame = tk.Frame(self.root, bg='white', padx=40, pady=30)
-    question_frame.pack(pady=20, fill='both', expand=True)
-    
-    # Question text
-    question_text = session['questions'][current_q]
-    tk.Label(question_frame, text=question_text, 
-            font=("Arial", 14), bg='white', wraplength=700, justify='left').pack(pady=20)
-    
-    # Answer text area
-    tk.Label(question_frame, text="Your Answer:", font=("Arial", 12, "bold"), 
-            bg='white').pack(anchor='w', pady=(20, 5))
-    
-    self.answer_text = tk.Text(question_frame, height=10, width=80, 
-                              font=("Arial", 11), wrap='word')
-    self.answer_text.pack(pady=5)
-    
-    # Buttons
-    button_frame = tk.Frame(question_frame, bg='white')
-    button_frame.pack(pady=20)
-    
-    tk.Button(button_frame, text="Submit Answer", 
-             command=self.submit_interview_answer, bg='#4CAF50', fg='white',
-             font=("Arial", 12), padx=20).pack(side='left', padx=5)
-    
-    tk.Button(button_frame, text="Skip Question", 
-             command=self.skip_question, bg='#FF9800', fg='white',
-             font=("Arial", 12), padx=20).pack(side='left', padx=5)
-
-def submit_interview_answer(self):
-    """Submit the current answer"""
-    answer = self.answer_text.get('1.0', tk.END).strip()
-    
-    if not answer:
-        messagebox.showwarning("Warning", "Please provide an answer before submitting")
-        return
-    
-    success, result = self.interview_system.submit_answer(self.current_interview_session, answer)
-    
-    if success:
-        self.current_interview_session = result
-        if self.current_interview_session['completed']:
-            self.show_interview_results()
-        else:
-            self.show_interview_question()
-    else:
-        messagebox.showerror("Error", result)
-
-def skip_question(self):
-    """Skip current question"""
-    result = messagebox.askyesno("Skip Question", "Are you sure you want to skip this question?")
-    if result:
-        success, result = self.interview_system.submit_answer(self.current_interview_session, "Skipped")
-        if success:
-            self.current_interview_session = result
-            if self.current_interview_session['completed']:
-                self.show_interview_results()
-            else:
-                self.show_interview_question()
-
-def show_interview_results(self):
-    """Show interview completion results"""
-    if not hasattr(self, 'current_interview_session'):
-        return
-    
-    session = self.current_interview_session
-    
-    # Save the completed session
-    self.interview_system.save_interview_session(session)
-    
-    self.clear_screen()
-    
-    # Title
-    title_label = tk.Label(self.root, text="Interview Completed!", 
-                          font=("Arial", 24, "bold"), bg='#f0f0f0', fg='#333')
-    title_label.pack(pady=30)
-    
-    # Results frame
-    results_frame = tk.Frame(self.root, bg='white', padx=40, pady=30)
-    results_frame.pack(pady=20)
-    
-    # Score display
-    score = session.get('score', 0)
-    score_color = '#4CAF50' if score >= 70 else '#FF9800' if score >= 50 else '#F44336'
-    
-    tk.Label(results_frame, text=f"Your Score: {score}%", 
-            font=("Arial", 20, "bold"), bg='white', fg=score_color).pack(pady=20)
-    
-    # Performance message
-    if score >= 80:
-        message = "Excellent performance! You demonstrated strong knowledge and communication skills."
-    elif score >= 60:
-        message = "Good performance! There's room for improvement in some areas."
-    else:
-        message = "Keep practicing! Focus on providing more detailed and relevant answers."
-    
-    tk.Label(results_frame, text=message, 
-            font=("Arial", 12), bg='white', wraplength=600, justify='center').pack(pady=10)
-    
-    # Summary
-    answered = len([a for a in session['answers'] if a['answer'] != "Skipped"])
-    skipped = len([a for a in session['answers'] if a['answer'] == "Skipped"])
-    
-    summary_text = f"""
-Interview Summary:
-• Total Questions: {len(session['questions'])}
-• Questions Answered: {answered}
-• Questions Skipped: {skipped}
-• Duration: {len(session['answers'])} responses
-    """
-    
-    tk.Label(results_frame, text=summary_text, 
-            font=("Arial", 11), bg='white', justify='left').pack(pady=20)
-    
-    # Buttons
-    button_frame = tk.Frame(results_frame, bg='white')
-    button_frame.pack(pady=20)
-    
-    tk.Button(button_frame, text="View Detailed Report", 
-             command=self.show_detailed_interview_report, bg='#2196F3', fg='white',
-             font=("Arial", 12), padx=20).pack(side='left', padx=5)
-    
-    tk.Button(button_frame, text="Start New Interview", 
-             command=self.create_interview_screen, bg='#4CAF50', fg='white',
-             font=("Arial", 12), padx=20).pack(side='left', padx=5)
-    
-    tk.Button(button_frame, text="Back to Dashboard", 
-             command=self.create_dashboard, bg='#9E9E9E', fg='white',
-             font=("Arial", 12), padx=20).pack(side='left', padx=5)
-
-def show_detailed_interview_report(self):
-    """Show detailed interview report"""
-    if not hasattr(self, 'current_interview_session'):
-        return
-    
-    session = self.current_interview_session
-    
-    # Create report window
-    report_window = tk.Toplevel(self.root)
-    report_window.title("Detailed Interview Report")
-    report_window.geometry("800x600")
-    report_window.configure(bg='#f0f0f0')
-    
-    # Create scrollable text widget
-    frame = tk.Frame(report_window, bg='white')
-    frame.pack(padx=20, pady=20, fill='both', expand=True)
-    
-    scrollbar = tk.Scrollbar(frame)
-    scrollbar.pack(side='right', fill='y')
-    
-    text_widget = tk.Text(frame, yscrollcommand=scrollbar.set, font=("Courier", 10))
-    scrollbar.config(command=text_widget.yview)
-    
-    # Format report
-    report = f"""INTERVIEW REPORT
-{'='*50}
-
-Score: {session.get('score', 0)}%
-Date: {datetime.fromisoformat(session['created_at']).strftime('%Y-%m-%d %H:%M:%S')}
-
-QUESTIONS AND ANSWERS
-{'='*50}
-
-"""
-    
-    for i, qa in enumerate(session['answers'], 1):
-        report += f"Q{i}: {qa['question']}\n"
-        report += f"A{i}: {qa['answer']}\n"
-        report += f"Time: {datetime.fromisoformat(qa['timestamp']).strftime('%H:%M:%S')}\n"
-        report += "-" * 50 + "\n\n"
-    
-    text_widget.insert('1.0', report)
-    text_widget.config(state='disabled')
-    text_widget.pack(fill='both', expand=True)
-    
-    # Close button
-    tk.Button(report_window, text="Close", command=report_window.destroy,
-             bg='#9E9E9E', fg='white', font=("Arial", 12), padx=20).pack(pady=10)
-
-# Add this class after your existing classes
-
-class InterviewSystem:
-    """Handles interview question generation and evaluation"""
-    
-    def __init__(self, data_manager):
-        self.data_manager = data_manager
-        self.interview_sessions_file = "interview_sessions.json"
-        self.ensure_interview_files_exist()
-    
-    def ensure_interview_files_exist(self):
-        """Create interview sessions file if it doesn't exist"""
-        if not os.path.exists(self.interview_sessions_file):
-            with open(self.interview_sessions_file, 'w') as f:
-                json.dump([], f)
-    
-    def load_interview_sessions(self):
-        """Load interview sessions from JSON file"""
-        try:
-            with open(self.interview_sessions_file, 'r') as f:
-                return json.load(f)
-        except:
-            return []
-    
-    def save_interview_session(self, session_data):
-        """Save interview session data"""
-        try:
-            sessions = self.load_interview_sessions()
-            sessions.append(session_data)
-            with open(self.interview_sessions_file, 'w') as f:
-                json.dump(sessions, f, indent=2)
-            return True
-        except Exception as e:
-            logging.error(f"Error saving interview session: {e}")
-            return False
-    
-    def start_interview_session(self, user_id, resume_path, jd_path):
-        """Start a new interview session"""
-        try:
-            # Extract text from files
-            resume_text = extract_text_from_file(resume_path)
-            jd_text = extract_text_from_file(jd_path)
-            
-            if not resume_text or not jd_text:
-                return None, "Failed to extract text from uploaded files"
-            
-            # Generate questions
-            questions = generate_interview_questions(resume_text, jd_text)
-            
-            if not questions:
-                return None, "Failed to generate interview questions"
-            
-            # Create session data
-            session_data = {
-                'session_id': len(self.load_interview_sessions()) + 1,
-                'user_id': user_id,
-                'created_at': datetime.now().isoformat(),
-                'resume_text': resume_text[:500] + "..." if len(resume_text) > 500 else resume_text,
-                'jd_text': jd_text[:500] + "..." if len(jd_text) > 500 else jd_text,
-                'questions': questions,
-                'answers': [],
-                'current_question': 0,
-                'completed': False,
-                'score': None
-            }
-            
-            return session_data, "Interview session started successfully"
-            
-        except Exception as e:
-            logging.error(f"Error starting interview session: {e}")
-            return None, f"Error starting interview: {str(e)}"
-    
-    def submit_answer(self, session_data, answer):
-        """Submit answer for current question"""
-        try:
-            current_q = session_data['current_question']
-            if current_q < len(session_data['questions']):
-                session_data['answers'].append({
-                    'question': session_data['questions'][current_q],
-                    'answer': answer,
-                    'timestamp': datetime.now().isoformat()
-                })
-                session_data['current_question'] += 1
-                
-                # Check if interview is completed
-                if session_data['current_question'] >= len(session_data['questions']):
-                    session_data['completed'] = True
-                    # Evaluate the interview
-                    qa_pairs = [{'question': qa['question'], 'answer': qa['answer']} 
-                               for qa in session_data['answers']]
-                    session_data['score'] = evaluate_qa_pairs(qa_pairs)
-                    session_data['completed_at'] = datetime.now().isoformat()
-                
-                return True, session_data
-            return False, "No more questions available"
-            
-        except Exception as e:
-            logging.error(f"Error submitting answer: {e}")
-            return False, f"Error submitting answer: {str(e)}"
+    def start_web_exam(self):
+        """Start web-based exam with tab switch monitoring"""
+        messagebox.showinfo("Info", "Web exam system not fully implemented yet")
 
 
 # Flask Web Application for Tab Switch API
@@ -1718,7 +1641,6 @@ def record_tab_switch_api():
         
         if not student_id:
             return jsonify({"error": "No student ID provided"}), 400
-        
         # Record tab switch
         result = tab_tracker.record_tab_switch(student_id)
         
@@ -1944,24 +1866,6 @@ def exam_page():
             }
         });
 
-        // Detect when page becomes hidden (tab switch, minimize, etc.)
-        document.addEventListener('visibilitychange', function() {
-            if (document.hidden && !examTerminated) {
-                recordTabSwitch();
-            }
-        });
-
-        // Detect when window loses focus
-        window.addEventListener('blur', function() {
-            if (!examTerminated) {
-                setTimeout(function() {
-                    if (!document.hasFocus()) {
-                        recordTabSwitch();
-                    }
-                }, 100);
-            }
-        });
-
         // Prevent page refresh
         window.addEventListener('beforeunload', function(e) {
             if (!examTerminated) {
@@ -2020,30 +1924,6 @@ def exam_page():
                     alert('Exam monitoring is now active. Any suspicious activity will be recorded.');
                 }
             }, 1000);
-        });
-
-        // Auto-submit form if terminated
-        function autoSubmitOnTermination() {
-            if (examTerminated) {
-                // Auto-submit the exam form
-                const form = document.getElementById('examForm');
-                if (form) {
-                    form.submit();
-                } else {
-                    // Redirect to results page
-                    window.location.href = '/exam_terminated';
-                }
-            }
-        }
-
-        // Monitor network status
-        window.addEventListener('online', function() {
-            console.log('Network connection restored');
-        });
-
-        window.addEventListener('offline', function() {
-            alert('Network connection lost! Please check your internet connection.');
-            recordTabSwitch();
         });
 
         // Heartbeat to server (optional - to maintain session)
@@ -2156,4 +2036,4 @@ if __name__ == "__main__":
         logging.error(f"Application error: {e}")
         print(f"Application failed to start: {e}")
         print("Please ensure all required libraries are installed:")
-        print("pip install opencv-python mediapipe ultralytics face-recognition pyaudio numpy pillow flask")
+        print("pip install opencv-python mediapipe ultralytics face-recognition pyaudio numpy pillow flask sentence-transformers scikit-learn python-docx PyPDF2 google-generativeai python-dotenv")        
