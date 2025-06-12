@@ -22,6 +22,18 @@ from docx import Document
 import PyPDF2
 from google import genai
 from dotenv import load_dotenv
+import speech_recognition as sr
+import torch
+import numpy as np
+import wave
+import threading
+import queue
+import time
+from urllib.request import urlretrieve
+import os
+
+
+
 
 
 
@@ -306,7 +318,436 @@ class TabSwitchTracker:
                 "status": "error",
                 "message": f"Error recording tab switch: {str(e)}"
             }
+class AudioInterface:
+    """Handles all audio input/output operations using Silero VAD and PyAudio"""
+    
+    def __init__(self):
+        # Initialize speech recognition
+        self.recognizer = sr.Recognizer()
+        
+        # Initialize PyAudio
+        self.audio = pyaudio.PyAudio()
+        
+        # Audio parameters
+        self.CHUNK = 1024
+        self.FORMAT = pyaudio.paFloat32
+        self.CHANNELS = 1
+        self.RATE = 16000
+        self.RECORD_SECONDS = 3
+        
+        # Initialize Silero VAD
+        self.init_silero_vad()
+        
+        # Recording control
+        self.is_recording = False
+        self.audio_queue = queue.Queue()
+        
+    def init_silero_vad(self):
+        """Initialize Silero VAD model"""
+        try:
+            # Check if model exists, if not download it
+            model_path = "silero_vad.jit"
+            if not os.path.exists(model_path):
+                print("Downloading Silero VAD model...")
+                urlretrieve(
+                    "https://github.com/snakers4/silero-vad/raw/master/files/silero_vad.jit",
+                    model_path
+                )
+            
+            # Load the model
+            self.vad_model = torch.jit.load(model_path)
+            self.vad_model.eval()
+            print("Silero VAD model loaded successfully")
+            
+        except Exception as e:
+            print(f"Error initializing Silero VAD: {e}")
+            self.vad_model = None
+            
+    def is_speech(self, audio_chunk):
+        """Detect speech using Silero VAD"""
+        try:
+            if self.vad_model is None:
+                return True  # Default to true if model isn't loaded
+                
+            # Convert audio chunk to tensor
+            audio_tensor = torch.FloatTensor(audio_chunk)
+            
+            # Get speech probability
+            speech_prob = self.vad_model(audio_tensor, self.RATE)
+            
+            return speech_prob > 0.5
+            
+        except Exception as e:
+            print(f"Error in speech detection: {e}")
+            return True
+            
+    def start_recording(self):
+        """Start audio recording with VAD"""
+        if self.is_recording:
+            return
+            
+        self.is_recording = True
+        self.recording_thread = threading.Thread(target=self._record_audio)
+        self.recording_thread.daemon = True
+        self.recording_thread.start()
+        print("Recording started...")
+        
+    def _record_audio(self):
+        """Internal method to handle continuous audio recording"""
+        try:
+            stream = self.audio.open(
+                format=self.FORMAT,
+                channels=self.CHANNELS,
+                rate=self.RATE,
+                input=True,
+                frames_per_buffer=self.CHUNK
+            )
+            
+            print("Listening... Speak now!")
+            
+            frames = []
+            silence_counter = 0
+            speech_detected = False
+            
+            while self.is_recording:
+                try:
+                    data = stream.read(self.CHUNK, exception_on_overflow=False)
+                    audio_chunk = np.frombuffer(data, dtype=np.float32)
+                    
+                    # Check for speech
+                    is_speech = self.is_speech(audio_chunk)
+                    
+                    if is_speech:
+                        if not speech_detected:
+                            print("Speech detected!")
+                        speech_detected = True
+                        silence_counter = 0
+                        frames.append(data)
+                    elif speech_detected:
+                        silence_counter += 1
+                        frames.append(data)
+                        
+                        # After 1 second of silence, save the recording
+                        if silence_counter > int(self.RATE / self.CHUNK):
+                            if len(frames) > 0:
+                                self.save_recording(frames)
+                            frames = []
+                            speech_detected = False
+                            silence_counter = 0
+                            
+                except Exception as e:
+                    print(f"Error reading audio stream: {e}")
+                    break
+                    
+            stream.stop_stream()
+            stream.close()
+            
+        except Exception as e:
+            print(f"Error in audio recording: {e}")
+            
+    def stop_recording(self):
+        """Stop audio recording"""
+        self.is_recording = False
+        if hasattr(self, 'recording_thread'):
+            self.recording_thread.join(timeout=1)
+            
+    def save_recording(self, frames):
+        """Save recorded audio to WAV file"""
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"recorded_audio_{timestamp}.wav"
+            
+            with wave.open(filename, 'wb') as wf:
+                wf.setnchannels(self.CHANNELS)
+                wf.setsampwidth(self.audio.get_sample_size(pyaudio.paFloat32))
+                wf.setframerate(self.RATE)
+                wf.writeframes(b''.join(frames))
+                
+            print(f"Recording saved as {filename}")
+            
+            # Attempt speech recognition
+            text = self.transcribe_audio(filename)
+            if text:
+                print(f"Transcribed text: {text}")
+                return text
+                
+        except Exception as e:
+            print(f"Error saving recording: {e}")
+            
+    def transcribe_audio(self, audio_file):
+        """Convert speech to text using Google Speech Recognition"""
+        try:
+            with sr.AudioFile(audio_file) as source:
+                audio = self.recognizer.record(source)
+                text = self.recognizer.recognize_google(audio)
+                return text
+                
+        except sr.UnknownValueError:
+            print("Speech Recognition could not understand the audio")
+            return None
+        except sr.RequestError as e:
+            print(f"Could not request results from Speech Recognition service: {e}")
+            return None
+            
+    def play_audio(self, audio_file):
+        """Play audio file using PyAudio"""
+        try:
+            wf = wave.open(audio_file, 'rb')
+            
+            stream = self.audio.open(
+                format=self.audio.get_format_from_width(wf.getsampwidth()),
+                channels=wf.getnchannels(),
+                rate=wf.getframerate(),
+                output=True
+            )
+            
+            data = wf.readframes(self.CHUNK)
+            while data:
+                stream.write(data)
+                data = wf.readframes(self.CHUNK)
+                
+            stream.stop_stream()
+            stream.close()
+            wf.close()
+            
+        except Exception as e:
+            print(f"Error playing audio: {e}")
+            
+    def cleanup(self):
+        """Cleanup audio resources"""
+        try:
+            self.stop_recording()
+            self.audio.terminate()
+        except Exception as e:
+            print(f"Error in cleanup: {e}")
 
+class InterviewSystem:
+    """Real-time AI interview system with speech capabilities"""
+    
+    def __init__(self, audio_interface, user_data, gemini_client):
+        self.audio_interface = audio_interface
+        self.user_data = user_data
+        self.gemini_client = gemini_client
+        self.interview_active = False
+        self.current_qa = []
+        self.interview_log = []
+        
+    def start_interview(self, resume_text, job_description):
+        """Start the AI interview with speech interaction"""
+        try:
+            # Generate interview questions
+            self.questions = generate_interview_questions(resume_text, job_description)
+            self.current_question_idx = 0
+            self.interview_active = True
+            
+            print("\n=== AI Interview Started ===")
+            print("The system will ask questions verbally and listen for your responses.")
+            print("Speak clearly into your microphone to answer.")
+            print("Press 'q' to quit, 'r' to repeat question\n")
+            
+            # Start the interview loop
+            self.conduct_interview()
+            
+        except Exception as e:
+            print(f"Error starting interview: {e}")
+            
+    def conduct_interview(self):
+        """Main interview loop with speech interaction"""
+        try:
+            while self.interview_active and self.current_question_idx < len(self.questions):
+                current_question = self.questions[self.current_question_idx]
+                
+                # Speak the question
+                print(f"\nQuestion {self.current_question_idx + 1}:")
+                print(current_question)
+                self.audio_interface.speak_text(current_question)
+                
+                # Record and process answer
+                print("\nListening for your answer... (Speak clearly)")
+                audio_file = self.record_answer()
+                
+                if audio_file:
+                    # Transcribe the answer
+                    answer_text = self.audio_interface.transcribe_audio(audio_file)
+                    
+                    if answer_text:
+                        print(f"\nYour answer: {answer_text}")
+                        
+                        # Save Q&A pair
+                        self.current_qa.append({
+                            'question': current_question,
+                            'answer': answer_text,
+                            'timestamp': datetime.now().isoformat()
+                        })
+                        
+                        # Move to next question
+                        self.current_question_idx += 1
+                    else:
+                        print("\nCould not understand the answer. Please try again.")
+                        self.audio_interface.speak_text("I couldn't understand your answer. Please try again.")
+                
+                # Check for interview completion
+                if self.current_question_idx >= len(self.questions):
+                    self.complete_interview()
+                    
+        except KeyboardInterrupt:
+            print("\nInterview interrupted by user.")
+            self.complete_interview()
+            
+    def record_answer(self):
+        """Record interview answer with voice activity detection"""
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"interview_answer_{timestamp}.wav"
+            
+            # Configure audio parameters for interview
+            CHUNK = 1024
+            FORMAT = pyaudio.paFloat32
+            CHANNELS = 1
+            RATE = 16000
+            
+            print("Recording... (Speak now)")
+            
+            # Start recording with voice detection
+            frames = []
+            silence_counter = 0
+            speech_detected = False
+            
+            stream = self.audio_interface.audio.open(
+                format=FORMAT,
+                channels=CHANNELS,
+                rate=RATE,
+                input=True,
+                frames_per_buffer=CHUNK
+            )
+            
+            # Record with VAD
+            while True:
+                data = stream.read(CHUNK, exception_on_overflow=False)
+                audio_chunk = np.frombuffer(data, dtype=np.float32)
+                
+                # Check for speech using Silero VAD
+                is_speech = self.audio_interface.is_speech(audio_chunk)
+                
+                if is_speech:
+                    if not speech_detected:
+                        print("Speech detected!")
+                    speech_detected = True
+                    silence_counter = 0
+                    frames.append(data)
+                elif speech_detected:
+                    silence_counter += 1
+                    frames.append(data)
+                    
+                    # Stop after 2 seconds of silence
+                    if silence_counter > int(RATE / CHUNK * 2):
+                        break
+                        
+                # Maximum answer length: 2 minutes
+                if len(frames) > int(RATE / CHUNK * 120):
+                    break
+                    
+            stream.stop_stream()
+            stream.close()
+            
+            # Save the recording
+            if len(frames) > 0:
+                with wave.open(filename, 'wb') as wf:
+                    wf.setnchannels(CHANNELS)
+                    wf.setsampwidth(self.audio_interface.audio.get_sample_size(FORMAT))
+                    wf.setframerate(RATE)
+                    wf.writeframes(b''.join(frames))
+                return filename
+                
+            return None
+            
+        except Exception as e:
+            print(f"Error recording answer: {e}")
+            return None
+            
+    def complete_interview(self):
+        """Complete the interview and provide feedback"""
+        self.interview_active = False
+        print("\n=== Interview Completed ===")
+        
+        # Evaluate answers
+        score = evaluate_qa_pairs(self.current_qa)
+        
+        # Generate feedback using Gemini AI
+        feedback = self.generate_interview_feedback()
+        
+        # Save interview results
+        self.save_interview_results(score, feedback)
+        
+        # Speak the feedback
+        print("\nInterview Feedback:")
+        print(f"Score: {score}/100")
+        print("\nDetailed Feedback:")
+        print(feedback)
+        
+        self.audio_interface.speak_text(f"You scored {score} out of 100 points. Here's your feedback: {feedback}")
+        
+    def generate_interview_feedback(self):
+        """Generate detailed interview feedback using Gemini AI"""
+        try:
+            if not self.gemini_client:
+                return "AI feedback generation not available. Please check your API configuration."
+                
+            # Prepare the prompt
+            prompt = f"""
+            Analyze this interview and provide constructive feedback:
+            
+            Candidate: {self.user_data['name']}
+            Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+            
+            Interview Q&A:
+            """
+            
+            for qa in self.current_qa:
+                prompt += f"\nQ: {qa['question']}\nA: {qa['answer']}\n"
+                
+            prompt += """
+            Please provide:
+            1. Overall performance assessment
+            2. Communication skills evaluation
+            3. Specific strengths
+            4. Areas for improvement
+            5. Recommendations for future interviews
+            
+            Keep the feedback constructive and actionable.
+            """
+            
+            response = self.gemini_client.generate_content(prompt)
+            return response.text.strip()
+            
+        except Exception as e:
+            print(f"Error generating feedback: {e}")
+            return "Error generating AI feedback. Please check the logs."
+            
+    def save_interview_results(self, score, feedback):
+        """Save interview results to file"""
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"interview_results_{timestamp}.json"
+            
+            results = {
+                'candidate': {
+                    'name': self.user_data['name'],
+                    'email': self.user_data['email']
+                },
+                'interview_date': datetime.now().isoformat(),
+                'qa_pairs': self.current_qa,
+                'score': score,
+                'feedback': feedback
+            }
+            
+            with open(filename, 'w') as f:
+                json.dump(results, f, indent=2)
+                
+            print(f"\nInterview results saved to {filename}")
+            
+        except Exception as e:
+            print(f"Error saving interview results: {e}")
 class ExamMonitoringSystem:
     """Complete exam monitoring system with all features"""
     
@@ -314,6 +755,8 @@ class ExamMonitoringSystem:
         self.user_data = user_data
         self.data_manager = data_manager
         self.tab_tracker = TabSwitchTracker(data_manager)
+        self.audio_interface = AudioInterface()
+        self.audio_thread = None
         
         # Audio parameters
         self.AUDIO_THRESHOLD = 2000
@@ -331,7 +774,8 @@ class ExamMonitoringSystem:
         self.init_audio()
         self.init_computer_vision()
         self.init_object_detection()
-        
+                # Initialize audio interface
+        self.audio_interface = AudioInterface()
         # Control variables
         self.monitoring = False
         self.audio_thread = None
@@ -602,7 +1046,12 @@ class ExamMonitoringSystem:
         
         self.monitoring = True
         stop_event.clear()  # Clear the stop event
-        
+        # Start audio interface
+        self.audio_thread = threading.Thread(target=self.audio_interface.start_listening)
+        self.audio_thread.daemon = True
+        self.audio_thread.start()
+                # Start audio recording
+        self.audio_interface.start_recording()
         # Start audio monitoring
         if self.audio_stream is not None:
             self.audio_thread = threading.Thread(target=self.audio_detection_thread)
@@ -672,7 +1121,12 @@ class ExamMonitoringSystem:
     def stop_monitoring(self):
         """Stop monitoring and save session data"""
         self.monitoring = False
+                # Stop audio interface
+        if self.audio_interface:\
+            self.audio_interface.stop_listening()
         
+        if self.audio_thread:
+            self.audio_thread.join(timeout=1)
         # Stop audio
         if self.audio_stream is not None:
             try:
@@ -691,9 +1145,10 @@ class ExamMonitoringSystem:
         self.session_data['session_end'] = datetime.now().isoformat()
         self.session_data['terminated_by_violations'] = stop_event.is_set()
         self.data_manager.save_monitoring_session(self.session_data)
-        
+        if hasattr(self, 'audio_interface'):
+            self.audio_interface.cleanup()
         logging.info("Session data saved successfully")
-
+       
 # AI Interview Functions - Add these BEFORE the ExamMonitoringGUI class
 def init_interview_components():
     """Initialize AI components for interview system"""
@@ -753,6 +1208,112 @@ def extract_text_from_file(file_path):
     except Exception as e:
         logging.error(f"Error extracting text from {file_path}: {e}")
         return None
+
+        def create_interview_screen(self):
+            """Create interview interface with real-time speech capabilities"""
+        self.clear_screen()
+        
+        # Title
+        title_label = tk.Label(self.root, text="AI Interview System",
+                               font=("Arial", 24, "bold"), bg='#f0f0f0', fg='#333')
+        title_label.pack(pady=30)
+        
+        # Interview frame
+        interview_frame = tk.Frame(self.root, bg='white', padx=40, pady=30)
+        interview_frame.pack(pady=20)
+        
+        # Upload resume
+        tk.Label(interview_frame, text="Upload Resume:", font=("Arial", 12),
+                bg='white').pack(anchor='w')
+        
+        self.resume_path = tk.StringVar()
+        resume_frame = tk.Frame(interview_frame, bg='white')
+        resume_frame.pack(pady=5, fill='x')
+        tk.Entry(resume_frame, textvariable=self.resume_path,
+                font=("Arial", 10), width=40).pack(side='left', padx=(0, 5))
+        tk.Button(resume_frame, text="Browse",
+                 command=self.browse_resume).pack(side='left')
+        
+        # Upload job description
+        tk.Label(interview_frame, text="Upload Job Description:", font=("Arial", 12),
+                bg='white').pack(anchor='w', pady=(10, 0))
+        
+        self.jd_path = tk.StringVar()
+        jd_frame = tk.Frame(interview_frame, bg='white')
+        jd_frame.pack(pady=5, fill='x')
+        tk.Entry(jd_frame, textvariable=self.jd_path,
+                font=("Arial", 10), width=40).pack(side='left', padx=(0, 5))
+        tk.Button(jd_frame, text="Browse",
+                 command=self.browse_jd).pack(side='left')
+        
+        # Buttons
+        button_frame = tk.Frame(interview_frame, bg='white')
+        button_frame.pack(pady=20)
+        
+        tk.Button(button_frame, text="Start Real-Time Interview",
+                 command=self.start_realtime_interview,
+                 bg='#4CAF50', fg='white',
+                 font=("Arial", 12), padx=20).pack(side='left', padx=5)
+        
+        tk.Button(button_frame, text="Back to Dashboard",
+                 command=self.create_dashboard,
+                 bg='#9E9E9E', fg='white',
+                 font=("Arial", 12), padx=20).pack(side='left', padx=5)
+    
+    def start_realtime_interview(self):
+        """Start real-time interview with speech interaction"""
+        resume_file = self.resume_path.get().strip()
+        jd_file = self.jd_path.get().strip()
+        
+        if not resume_file or not jd_file:
+            messagebox.showerror("Error", "Please select both resume and job description files")
+            return
+            
+        try:
+            # Read resume and job description
+            resume_text = extract_text_from_file(resume_file)
+            jd_text = extract_text_from_file(jd_file)
+            
+            if not resume_text or not jd_text:
+                messagebox.showerror("Error", "Could not read the uploaded files")
+                return
+                
+            # Initialize interview system
+            interview_system = InterviewSystem(
+                AudioInterface(),
+                self.current_user,
+                gemini_client
+            )
+            
+            # Show interview instructions
+            instructions = """
+            REAL-TIME INTERVIEW INSTRUCTIONS
+            
+            1. The system will ask questions verbally
+            2. Speak clearly into your microphone to answer
+            3. Wait for the system to process each answer
+            4. Press 'q' to quit, 'r' to repeat question
+            5. The interview will be recorded and analyzed
+            
+            Ready to start?
+            """
+            
+            result = messagebox.askokcancel("Interview Instructions", instructions)
+            if not result:
+                return
+                
+            # Hide main window during interview
+            self.root.withdraw()
+            
+            # Start the interview
+            interview_system.start_interview(resume_text, jd_text)
+            
+            # Show main window again
+            self.root.deiconify()
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to start interview: {str(e)}")
+            self.root.deiconify()
 
 
 def generate_interview_questions(resume_text, job_description):
