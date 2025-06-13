@@ -1178,7 +1178,7 @@ def init_interview_components():
         load_dotenv()
         
         # Get API key from environment
-        api_key = os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
+        api_key = os.getenv('GEMINI_API_KEY')
         if not api_key:
             logging.error("Google/Gemini API key not found in environment variables")
             return False
@@ -1226,84 +1226,39 @@ def extract_text_from_file(file_path):
         logging.error(f"Error extracting text from {file_path}: {e}")
         return None
 
-def generate_interview_questions(resume_text, job_description):
-    """Generate interview questions using AI based on resume and job description"""
-    global gemini_client
-    
-    if not gemini_client:
-        logging.error("Gemini client not initialized")
-        return [
-            "Tell me about yourself and your background.",
-            "Why are you interested in this position?",
-            "What are your key strengths?",
-            "Describe a challenging situation you faced and how you handled it.",
-            "What are your career goals?",
-            "How do you handle working in a team?",
-            "What technical skills do you possess?",
-            "Why should we hire you for this position?"
-        ]
-    
-    try:
-        prompt = f"""
-You are an expert interviewer conducting a job interview. Based on the candidate's resume and the job description provided, generate 8 relevant interview questions that assess technical skills, experience, and cultural fit.
+def generate_interview_questions(client, resume: str, jd: str, n: int = 6) -> list[str]:
+    """Use Gemini to generate n interview questions based on resume and JD."""
+    prompt = (
+        f"Given the following résumé:\n{resume_text}\n\n"
+        f"And the following job description:\n{job_description}\n\n"
+        f"Your task is to generate the top {n} most relevant interview questions tailored to the candidate’s skill and experience level, and aligned with the job requirements.\n\n"
+        "Instructions:\n"
+        "1. Carefully analyze the résumé to determine the candidate's level (e.g., fresher, intermediate, experienced).\n"
+        "2. Match the question difficulty and content appropriately.\n"
+        f"3. Return only a cleanly numbered list (e.g., 1. ..., 2. ..., etc) of {n} concise, high-quality questions. No introduction or explanation."
+    )
 
-Resume (first 2000 characters):
-{resume_text[:2000]}
+    resp = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=prompt,
+    )
+    text = resp.text.strip()
 
-Job Description (first 1500 characters):
-{job_description[:1500]}
+    # Extract numbered questions
+    questions = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line[0].isdigit() and "." in line:
+            parts = line.split('.', 1)
+            if len(parts) > 1:
+                q = parts[1].strip()
+                questions.append(q)
+        if len(questions) >= n:
+            break
 
-Generate exactly 8 questions, each on a new line, starting with "Q:" followed by the question.
-Example format:
-Q: Tell me about your experience with...
-Q: How would you handle...
-
-Focus on:
-- Technical skills mentioned in resume
-- Experience relevant to job requirements
-- Problem-solving abilities
-- Career motivation
-"""
-
-        response = gemini_client.generate_content(prompt)
-        response_text = response.text.strip()
-        
-        # Extract questions from response
-        questions = []
-        lines = response_text.split('\n')
-        
-        for line in lines:
-            line = line.strip()
-            if line.startswith('Q:'):
-                question = line[2:].strip()
-                if question and len(question) > 10:
-                    questions.append(question)
-            elif '?' in line and len(line) > 15:
-                # Alternative parsing for questions without Q: prefix
-                question = line.strip()
-                if question:
-                    questions.append(question)
-        
-        # Ensure we have at least some questions
-        if len(questions) >= 5:
-            logging.info(f"Generated {len(questions)} interview questions using AI")
-            return questions[:8]  # Return maximum 8 questions
-        else:
-            raise Exception("Insufficient questions generated")
-        
-    except Exception as e:
-        logging.error(f"Error generating AI interview questions: {e}")
-        # Return default questions as fallback
-        return [
-            "Tell me about yourself and your professional background.",
-            "Why are you interested in this specific position?",
-            "What are your key strengths that make you suitable for this role?",
-            "Describe a challenging project you worked on and how you handled it.",
-            "How do you stay updated with industry trends and new technologies?",
-            "What motivates you in your work?",
-            "How do you handle working under pressure or tight deadlines?",
-            "Where do you see yourself professionally in the next 3-5 years?"
-        ]
+    return questions
 
 def evaluate_qa_pairs(qa_pairs):
     """Evaluate interview answers using AI and return a score"""
